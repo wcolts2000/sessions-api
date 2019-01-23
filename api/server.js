@@ -1,50 +1,29 @@
-const express = require('express');
-const helmet = require('helmet');
-const morgan = require('morgan');
-const cors = require('cors');
-const knex = require('knex');
-const knexConfig = require('../knexfile');
-const bcrypt = require('bcryptjs');
-const session = require('express-session');
-const knexSessionStore = require('connect-session-knex')(session);
+require("dotenv").config();
+const express = require("express");
+const helmet = require("helmet");
+const morgan = require("morgan");
+const cors = require("cors");
+const knex = require("knex");
+const knexConfig = require("../knexfile");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 
 const server = express();
 
-const db = knex(knexConfig.development)
-
-const sessionConfig = {
-  name: 'authBanana', //default is sid
-  secret: 'ldfksghjmgndf;lkghd;sazc,xvn;safjSVGForeignObjectElement.,NDFO;SZ',
-  cookie: {
-    maxAge: 1000 * 60 * 10, // 10 min. in milliseconds
-    secure: false, // only send cookie over https when true, during dev, set to false
-  },
-  httpOnly: true, // JS cant touch cookie
-  resave: false,
-  saveUninitialized: false,
-  store: new knexSessionStore({
-    tablename: 'sessions',
-    sidfieldname: 'sid',
-    knex: db,
-    createtable: true,
-    clearInterval: 1000 * 60 * 10, // in milliseconds
-  })
-};
-
+const db = knex(knexConfig.development);
 
 server.use(helmet());
-server.use(morgan('dev'));
+server.use(morgan("dev"));
 server.use(cors());
 server.use(express.json());
-server.use(session(sessionConfig))
 
 // SANITY CHECK
-server.get('/', (req, res) => {
-  res.send('👋🌎🌍🌏, api alive')
-})
+server.get("/", (req, res) => {
+  res.send("👋🌎🌍🌏, api alive");
+});
 
 // REGISTER ROUTE
-server.post('/register', (req, res) => {
+server.post("/register", (req, res) => {
   const userInfo = req.body;
 
   // hash password
@@ -52,57 +31,101 @@ server.post('/register', (req, res) => {
 
   userInfo.password = hash;
 
-  db('users')
+  db("users")
     .insert(userInfo)
-    .then(ids => { 
-      res.status(201)
-      .json(ids)})
-    .catch(err => res.status(500).json(err))
-})
+    .then(ids => {
+      res.status(201).json(ids);
+    })
+    .catch(err => res.status(500).json(err));
+});
+
+// FUNCTION TO GENERATE TOKEN
+function generateToken(user) {
+  const payload = {
+    username: user.username,
+    name: user.name,
+    roles: ['admin', 'sales'],
+  };
+
+  const secret = process.env.JWT_SECRET;
+
+  const options = {
+    expiresIn: "10m"
+  };
+
+  return jwt.sign(payload, secret, options);
+}
 
 // LOGIN ROUTE
-server.post('/login', (req, res) => {
+server.post("/login", (req, res) => {
   const credentials = req.body;
-  
-  db('users').where({username: credentials.username}).first().then(user => {
-    if(user && bcrypt.compareSync(credentials.password, user.password)) {
-      req.session.user = user
-      res.status(200).json({message: `welcome ${user.name}`});
-    } else {
-      res.status(401).json({ message: "you shall not pass!!!!"})
-    }
-  })
-  .catch(err => res.status(500).json(err))
-})
+
+  db("users")
+    .where({ username: credentials.username })
+    .first()
+    .then(user => {
+      if (user && bcrypt.compareSync(credentials.password, user.password)) {
+        // login is successful
+        // create token
+        const token = generateToken(req.body);
+        res.status(200).json({ message: `welcome ${user.name}`, token });
+      } else {
+        res.status(401).json({ message: "you shall not pass!!!!" });
+      }
+    })
+    .catch(err => res.status(500).json(err));
+});
 
 function protected(req, res, next) {
   // if user is logged in call next()
-  if(req.session.user) {
-    next();
+  const token = req.headers.authorization;
+
+  if (token) {
+    jwt.verify(token, process.env.JWT_SECRET, (err, decodedToken) => {
+      if (err) {
+        res.status(401).json({ message: "invalid token" });
+      } else {
+        req.decodedToken = decodedToken;
+        next();
+      }
+    });
   } else {
-    res.status(401).json({message: "you shall not pass! NOT AUTHORIZED"})
+    res.status(401).json({ message: "no token provided" });
+  }
+}
+
+function checkRole(roll) {
+  return function(req,res,next) {
+    if(req.decodedToken.roles.includes(roll)) {
+      next();
+    } else {
+      res.status(403).json({ message: `not authorized, ${roll} only`})
+    }
   }
 }
 
 // PROTECTED USERS ROUTE
-server.get('/users', protected, async(req, res) => {
-  const users = await db('users');
-  res.status(200).json(users)
+server.get("/users", protected, checkRole("accountant"), async (req, res) => {
+  const users = await db("users").select("id", "username", "name");
+  res.status(200).json({ users, decodedToken: req.decodedToken });
+});
+
+// GET ME ROUTE
+server.get('/users/me', protected, checkRole("admin"), async (req, res) => {
+  const user = await db('users')
+    .where({username: req.decodedToken.username})
+    .first()
+
+    res.status(200).json(user)
 })
 
-// LOGOUT ROUTE
-server.get('/logout', (req, res) => {
-  if(req.session) {
-    req.session.destroy(err => {
-      if(err) {
-        res.status(500).send('you can never leave')
-      } else {
-        res.status(200).json({ message: "goodbye"})
-      }
-    });
-  } else {
-    res.json({ message: 'logged out already'})
-  }
+// GET SINGLE USER
+server.get("/users/:id", protected, async (req, res) => {
+  const user = await db("users")
+    .where({ id: req.params.id })
+    .first();
+
+  res.status(200).json(user);
 });
 
 module.exports = server;
