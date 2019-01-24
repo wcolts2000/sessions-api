@@ -44,7 +44,7 @@ function generateToken(user) {
   const payload = {
     username: user.username,
     name: user.name,
-    roles: ['admin', 'sales'],
+    roles: ["admin", "sales"]
   };
 
   const secret = process.env.JWT_SECRET;
@@ -95,29 +95,29 @@ function protected(req, res, next) {
 }
 
 function checkRole(roll) {
-  return function(req,res,next) {
-    if(req.decodedToken.roles.includes(roll)) {
+  return function(req, res, next) {
+    if (req.decodedToken.roles.includes(roll)) {
       next();
     } else {
-      res.status(403).json({ message: `not authorized, ${roll} only`})
+      res.status(403).json({ message: `not authorized, ${roll} only` });
     }
-  }
+  };
 }
 
-// PROTECTED USERS ROUTE
-server.get("/users", protected, checkRole("accountant"), async (req, res) => {
+// PROTECTED USERS ROUTE  protected, checkRole("accountant"),
+server.get("/users", async (req, res) => {
   const users = await db("users").select("id", "username", "name");
   res.status(200).json({ users, decodedToken: req.decodedToken });
 });
 
 // GET ME ROUTE
-server.get('/users/me', protected, checkRole("admin"), async (req, res) => {
-  const user = await db('users')
-    .where({username: req.decodedToken.username})
-    .first()
+server.get("/users/me", protected, checkRole("admin"), async (req, res) => {
+  const user = await db("users")
+    .where({ username: req.decodedToken.username })
+    .first();
 
-    res.status(200).json(user)
-})
+  res.status(200).json(user);
+});
 
 // GET SINGLE USER
 server.get("/users/:id", protected, async (req, res) => {
